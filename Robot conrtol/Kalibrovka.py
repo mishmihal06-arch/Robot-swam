@@ -38,7 +38,7 @@ import numpy as np
 from pose_camera import get_pose, start_camera, stop_camera
 
 # ===================== 1. ПОДКЛЮЧЕНИЕ =====================
-ROBOT_IP = "192.168.1.42"
+ROBOT_IP = "вставить"
 ROBOT_PORT = 8888
 CALIB_FILE = "robot_calibration.json"
 
