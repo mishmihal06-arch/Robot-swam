@@ -2,8 +2,8 @@
 #include <WiFiUdp.h>
 
 // ==================== 1. НАСТРОЙКИ WI-FI ====================
-const char* ssid = "realme 999";
-const char* password = "12345670";
+const char* ssid = "имя сети";
+const char* password = "парольсети";
 const int udpPort = 8888;
 
 // ==================== 2. ПИНЫ МОТОРОВ (ВАША РЕАЛЬНАЯ РАСПИНОВКА) ====================
