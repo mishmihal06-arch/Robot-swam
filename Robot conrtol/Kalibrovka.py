@@ -22,6 +22,8 @@ robot_ctrl.py — точное управление трёхколёсным р�
 Ограничения: единицы длины = единицы, которые возвращает get_pose().
 Угол из get_pose() должен быть направлен в ту же сторону, что и оси x,y
 (против часовой при обычных осях; для пиксельных координат — как atan2(dy, dx)).
+
+Поза берётся из pose_camera.py (потолочная камера + AprilTag).
 """
 import json
 import math
@@ -32,24 +34,21 @@ import time
 
 import numpy as np
 
+# ===================== 0. КАМЕРА (поза) =====================
+from pose_camera import get_pose, start_camera, stop_camera
+
 # ===================== 1. ПОДКЛЮЧЕНИЕ =====================
 ROBOT_IP = "192.168.1.42"
 ROBOT_PORT = 8888
 CALIB_FILE = "robot_calibration.json"
 
-# ===================== 2. ВАША ФУНКЦИЯ ПОЗЫ =====================
-ANGLE_IN_DEGREES = False      # True, если get_pose() отдаёт угол в градусах
-
-
-def get_pose():
-    """ЗАМЕНИТЕ на свою функцию.
-    Возвращает (x, y, theta) положения метки на роботе или None, если метка не видна.
-    """
-    raise NotImplementedError("подставьте сюда вашу функцию получения координат")
+# ===================== 2. ФУНКЦИЯ ПОЗЫ =====================
+# get_pose импортирован из pose_camera: возвращает (x, y, theta_rad) или None
+ANGLE_IN_DEGREES = False      # pose_camera отдаёт угол в радианах
 
 
 # ===================== 3. НАСТРОЙКИ =====================
-# Допуски (длина — в единицах get_pose, например мм)
+# Допуски (длина — в единицах get_pose, пиксели)
 POS_TOL = 2.0                 # допустимая ошибка по положению
 ANG_TOL_DEG = 1.0             # допустимая ошибка по углу
 # Зона «точной доводки» импульсами
@@ -353,6 +352,7 @@ class Robot:
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "demo"
     robot = Robot()
+    start_camera()
     try:
         if cmd == "calibrate" or not os.path.exists(CALIB_FILE):
             robot.calibrate()
@@ -370,3 +370,4 @@ if __name__ == "__main__":
         pass
     finally:
         robot.stop()
+        stop_camera()
