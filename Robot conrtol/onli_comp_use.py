@@ -4,7 +4,7 @@ import time
 import threading
 
 # ==================== НАСТРОЙКИ ====================
-ROBOT_IP = "192.168.1.42"
+ROBOT_IP = " вставить"
 ROBOT_PORT = 8888
 SEND_INTERVAL = 0.05          # 20 Гц
 
