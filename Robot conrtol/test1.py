@@ -3,7 +3,7 @@ import keyboard
 import time
 import threading
 
-ROBOT_IP = "10.214.241.120"   # ← замените на IP из Serial-монитора
+ROBOT_IP = ""   # ← замените на IP из Serial-монитора
 ROBOT_PORT = 8888
 SEND_INTERVAL = 0.05         # 20 Гц — удерживает Watchdog (300 мс) живым
 
