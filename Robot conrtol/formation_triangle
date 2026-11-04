@@ -114,7 +114,14 @@ def main():
             ys = [p[1] for p in poses.values()]
             centroid_x = sum(xs) / len(xs)
             centroid_y = sum(ys) / len(ys)
-            centroid_yaw = poses[0][2]  # угол лидера (tag_id=0)
+
+            # ВАЖНО: 
+            # Если мы СТРОИМ треугольник — фиксируем угол (например, 0, то есть "вверх" по камере).
+            # Если мы УЖЕ ЕДЕМ — берем угол лидера, чтобы сохранять ориентацию.
+            if state == STATE_BUILDING or state == STATE_READY:
+                centroid_yaw = 0.0  # Жестко задаем направление "вверх"
+            else:
+                centroid_yaw = poses[0][2]  # В движении ориентируемся по лидеру
 
             # === ЛОГИКА СОСТОЯНИЙ ===
 
