@@ -1,131 +1,184 @@
 import time
 import math
-from pose_camera import start_camera, stop_camera, get_pose
+from pose_camera import start_camera, stop_camera, get_all_poses  # нужно доработать!
 from robot_driver import Robot
 
-# ================= НАСТРОЙКИ ФОРМАЦИИ =================
+# ================= НАСТРОЙКИ =================
 
-# Желаемые смещения роботов относительно центра формации (в пикселях камеры)
-# Равносторонний треугольник, сторона ~200 пикселей
+# Смещения роботов в треугольнике (в пикселях камеры)
 FORMATION_OFFSETS = {
-    "ROBOT_001": {"dx": 0, "dy": -100},    # Лидер (спереди по центру)
-    "ROBOT_002": {"dx": -87, "dy": 50},    # Левый задний
-    "ROBOT_003": {"dx": 87, "dy": 50},     # Правый задний
+    0: {"dx": 0, "dy": -100},     # Лидер (спереди)
+    1: {"dx": -87, "dy": 50},     # Левый задний
+    2: {"dx": 87, "dy": 50},      # Правый задний
 }
 
-TARGET_SPEED_VX = 0.3   # Скорость движения формации вперёд (доли от 1, медленно!)
-KP_POS = 0.5            # Коэффициент коррекции позиции (P-регулятор)
+# Маппинг: ID тега на камере → robot_id в конфиге
+TAG_TO_ROBOT = {
+    0: "ROBOT_001",
+    1: "ROBOT_002",
+    2: "ROBOT_003",
+}
+
+# Параметры управления
+TARGET_SPEED_VX = 0.3   # Скорость вперёд при движении формации
+KP_POS = 0.5            # Коэффициент коррекции позиции
 KP_YAW = 1.0            # Коэффициент удержания курса
-MAX_OMEGA = 0.5         # Максимальная угловая скорость
-MAX_V = 0.6             # Максимальная линейная скорость
+MAX_OMEGA = 0.5
+MAX_V = 0.6
+
+# Критерий "треугольник построен"
+BUILD_TOLERANCE = 15    # пикселей — насколько близко должен быть робот к цели
+BUILD_STABLE_TIME = 1.0 # секунд — сколько нужно держаться в пределах допуска
 
 # ======================================================
 
 
 def normalize_angle(angle):
-    """Нормализует угол в диапазон [-pi, pi]."""
     return (angle + math.pi) % (2 * math.pi) - math.pi
 
 
-def calculate_target_pose(robot_id, centroid_x, centroid_y, centroid_yaw):
-    """
-    Рассчитывает целевую позицию (x, y, yaw) для конкретного робота
-    на основе центра формации и его смещения.
-    """
-    offset = FORMATION_OFFSETS.get(robot_id, {"dx": 0, "dy": 0})
-
-    # Поворот смещения на угол ориентации формации (2D-ротация)
+def calculate_target_pose(tag_id, centroid_x, centroid_y, centroid_yaw):
+    offset = FORMATION_OFFSETS.get(tag_id, {"dx": 0, "dy": 0})
     cos_a = math.cos(centroid_yaw)
     sin_a = math.sin(centroid_yaw)
-
     target_x = centroid_x + (offset["dx"] * cos_a - offset["dy"] * sin_a)
     target_y = centroid_y + (offset["dx"] * sin_a + offset["dy"] * cos_a)
-    target_yaw = centroid_yaw  # Все роботы смотрят в одну сторону
-
+    target_yaw = centroid_yaw
     return target_x, target_y, target_yaw
 
 
-def get_all_poses():
-    """
-    ЗАГЛУШКА: должна возвращать {robot_id: (x, y, yaw, timestamp)} для ВСЕХ видимых роботов.
-    Сейчас твоя pose_camera.py возвращает данные только по одному TARGET_ID.
-    Это нужно доработать — см. комментарий ниже.
-    """
-    pose = get_pose()
-    if pose is None:
-        return {}
-    
-    # ВРЕМЕННО: возвращаем одного робота с захардкоженным ID
-    # В реальности здесь должен быть цикл по всем детектированным тегам
-    x, y, yaw, ts = pose
-    return {"ROBOT_001": (x, y, yaw, ts)}
+def is_triangle_built(poses, centroid_x, centroid_y, centroid_yaw):
+    """Проверяет, все ли роботы в пределах допуска от своих целевых позиций."""
+    for tag_id, (curr_x, curr_y, curr_yaw, ts) in poses.items():
+        target_x, target_y, _ = calculate_target_pose(tag_id, centroid_x, centroid_y, centroid_yaw)
+        dist = math.hypot(target_x - curr_x, target_y - curr_y)
+        if dist > BUILD_TOLERANCE:
+            return False
+    return True
+
+
+def compute_control_cmd(curr_x, curr_y, curr_yaw, target_x, target_y, target_yaw, moving=False):
+    """Считает команду для робота. Если moving=True — добавляет движение вперёд."""
+    err_x = target_x - curr_x
+    err_y = target_y - curr_y
+    err_yaw = normalize_angle(target_yaw - curr_yaw)
+
+    cmd_vx = KP_POS * err_x
+    cmd_vy = KP_POS * err_y
+    cmd_w = KP_YAW * err_yaw
+
+    if moving:
+        # Добавляем общее движение вперёд (в системе координат робота)
+        cmd_vx += TARGET_SPEED_VX * math.cos(curr_yaw)
+        cmd_vy += TARGET_SPEED_VX * math.sin(curr_yaw)
+
+    # Ограничения
+    cmd_vx = max(-MAX_V, min(MAX_V, cmd_vx))
+    cmd_vy = max(-MAX_V, min(MAX_V, cmd_vy))
+    cmd_w = max(-MAX_OMEGA, min(MAX_OMEGA, cmd_w))
+
+    return cmd_vx, cmd_vy, cmd_w
 
 
 def main():
     print("🚀 Запуск системы управления формацией «Треугольник»...")
     start_camera()
 
-    # Словарь подключенных роботов (ключ — robot_id)
+    # Подключаем всех роботов (нужно доработать — см. ниже)
     robots = {}
-    # TODO: инициализация через robot_config_store.load_robot_config() + Robot.connect()
-    # Пока оставим пустым — нужно решить, как подключать нескольких роботов одновременно
+    # TODO: инициализация через robot_config_store для каждого robot_id
+
+    # Состояние системы
+    STATE_BUILDING = "building"
+    STATE_READY = "ready"
+    STATE_MOVING = "moving"
+    state = STATE_BUILDING
+
+    stable_since = None  # когда треугольник впервые стал стабильным
 
     try:
         while True:
-            # 1. Получаем данные со всех роботов
-            poses = get_all_poses()
+            poses = get_all_poses()  # {tag_id: (x, y, yaw, ts)}
 
             if len(poses) < 3:
-                print(f"⚠️  Видно только {len(poses)} робота(ов), нужно 3. Ждём...")
+                print(f"⚠️  Видно только {len(poses)} робота(ов), нужно 3")
                 for r in robots.values():
                     r.drive(0, 0, 0)
+                state = STATE_BUILDING
+                stable_since = None
                 time.sleep(0.1)
                 continue
 
-            # 2. Вычисляем центр формации (среднее арифметическое по всем роботам)
+            # Считаем центр формации
             xs = [p[0] for p in poses.values()]
             ys = [p[1] for p in poses.values()]
             centroid_x = sum(xs) / len(xs)
             centroid_y = sum(ys) / len(ys)
+            centroid_yaw = poses[0][2]  # угол лидера (tag_id=0)
 
-            # Угол формации — берём от лидера (ROBOT_001) или усредняем
-            leader_id = "ROBOT_001"
-            centroid_yaw = poses[leader_id][2] if leader_id in poses else 0.0
+            # === ЛОГИКА СОСТОЯНИЙ ===
 
-            # 3. Для каждого робота считаем ошибку и команду
-            for robot_id, (curr_x, curr_y, curr_yaw, ts) in poses.items():
-                if robot_id not in robots:
-                    continue  # Пропускаем, если робот не инициализирован
+            if state == STATE_BUILDING:
+                # Строим треугольник
+                for tag_id, (curr_x, curr_y, curr_yaw, ts) in poses.items():
+                    robot_id = TAG_TO_ROBOT.get(tag_id)
+                    if robot_id not in robots:
+                        continue
+                    target_x, target_y, target_yaw = calculate_target_pose(
+                        tag_id, centroid_x, centroid_y, centroid_yaw
+                    )
+                    cmd_vx, cmd_vy, cmd_w = compute_control_cmd(
+                        curr_x, curr_y, curr_yaw, target_x, target_y, target_yaw, moving=False
+                    )
+                    robots[robot_id].drive(cmd_vx, cmd_vy, cmd_w)
 
-                target_x, target_y, target_yaw = calculate_target_pose(
-                    robot_id, centroid_x, centroid_y, centroid_yaw
-                )
+                # Проверяем, построен ли треугольник
+                if is_triangle_built(poses, centroid_x, centroid_y, centroid_yaw):
+                    if stable_since is None:
+                        stable_since = time.time()
+                        print("✅ Треугольник построен! Ждём подтверждения стабильности...")
+                    elif time.time() - stable_since > BUILD_STABLE_TIME:
+                        print("🟢 Треугольник стабилен. Переход в режим READY.")
+                        state = STATE_READY
+                        stable_since = None
+                else:
+                    stable_since = None
 
-                # Ошибки
-                err_x = target_x - curr_x
-                err_y = target_y - curr_y
-                err_yaw = normalize_angle(target_yaw - curr_yaw)
+            elif state == STATE_READY:
+                # Ждём подтверждения (нажатие клавиши или таймер)
+                for r in robots.values():
+                    r.drive(0, 0, 0)  # стоим на месте
+                
+                print("⏳ Нажмите ENTER для старта движения вперёд...")
+                input()  # ждём нажатия клавиши
+                
+                print("🚀 Старт движения!")
+                state = STATE_MOVING
 
-                # Простейшее управление: движение к своей точке + общее движение вперёд
-                cmd_vx = TARGET_SPEED_VX + KP_POS * err_x
-                cmd_vy = KP_POS * err_y
-                cmd_w = KP_YAW * err_yaw
+            elif state == STATE_MOVING:
+                # Едем вперёд, удерживая формацию
+                # Центр формации теперь движется вперёд
+                # (упрощённо — просто добавляем TARGET_SPEED_VX к движению)
+                for tag_id, (curr_x, curr_y, curr_yaw, ts) in poses.items():
+                    robot_id = TAG_TO_ROBOT.get(tag_id)
+                    if robot_id not in robots:
+                        continue
+                    target_x, target_y, target_yaw = calculate_target_pose(
+                        tag_id, centroid_x, centroid_y, centroid_yaw
+                    )
+                    cmd_vx, cmd_vy, cmd_w = compute_control_cmd(
+                        curr_x, curr_y, curr_yaw, target_x, target_y, target_yaw, moving=True
+                    )
+                    robots[robot_id].drive(cmd_vx, cmd_vy, cmd_w)
 
-                # Ограничения (клиппинг)
-                cmd_vx = max(-MAX_V, min(MAX_V, cmd_vx))
-                cmd_vy = max(-MAX_V, min(MAX_V, cmd_vy))
-                cmd_w = max(-MAX_OMEGA, min(MAX_OMEGA, cmd_w))
-
-                # 4. Отправка команды конкретному роботу
-                robots[robot_id].drive(cmd_vx, cmd_vy, cmd_w)
-
-                # 5. Логирование (опционально)
-                # log_writer.writerow([time.time(), robot_id, curr_x, curr_y, curr_yaw, cmd_vx, cmd_vy, cmd_w])
+                # Если нужно остановиться — можно добавить условие (например, по времени или координате)
+                # if time.time() - moving_since > 5.0:
+                #     state = STATE_READY
 
             time.sleep(0.05)  # 20 Гц
 
     except KeyboardInterrupt:
-        print("\n🛑 Остановка по команде пользователя")
+        print("\n🛑 Остановка")
     finally:
         for r in robots.values():
             r.stop()
