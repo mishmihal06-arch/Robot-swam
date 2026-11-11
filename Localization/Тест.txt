@@ -1,0 +1,80 @@
+import cv2 # это база
+import numpy as np # это для математики
+from pupil_apriltags import Detector # это библиотека эйприл тегов
+
+# Инициализирует детектор AprilTag
+detector = Detector(
+    families="tag36h11",
+    nthreads=2,
+    quad_decimate=1.0,
+    quad_sigma=0.0,
+    refine_edges=1
+)
+
+# Подключает камеру
+cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+
+# Запрос максимальное разрешение 
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
+actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+actual_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+print(f"Текущее разрешение: {int(actual_w)}x{int(actual_h)}")
+
+TARGET_ID = 1  # Ищет робота с ID 0
+
+print("Поиск робота с ID 0 начался. Для выхода нажмите 'q'.")
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret or frame is None:
+        continue
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    detections = detector.detect(gray)
+
+    robot_found = False
+
+    for tag in detections:
+        if tag.tag_id == TARGET_ID:
+            robot_found = True
+
+            cx, cy = int(tag.center[0]), int(tag.center[1])
+
+            # tag.corners: [0] = левый нижний, [1] = правый нижний, [2] = правый верхний, [3] = левый верхний
+            # (или порядок обхода по часовой стрелке)
+            corners = tag.corners.astype(int)
+
+            front_x = int((corners[2][0] + corners[3][0]) / 2)
+            front_y = int((corners[2][1] + corners[3][1]) / 2)
+
+            angle_rad = np.arctan2(front_y - cy, front_x - cx)
+            angle_deg = np.degrees(angle_rad)
+
+
+            for i in range(4):
+                cv2.line(frame, tuple(corners[i]), tuple(corners[(i + 1) % 4]), (0, 255, 0), 2)
+
+            cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
+
+            cv2.arrowedLine(frame, (cx, cy), (front_x, front_y), (0, 0, 255), 3, tipLength=0.3)
+
+            text_pos = f"Robot 0: X={cx}, Y={cy}"
+            text_angle = f"Angle: {int(angle_deg)} deg"
+            cv2.putText(frame, text_pos, (cx - 60, cy - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, text_angle, (cx - 60, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            print(f"Позиция: ({cx}, {cy}) | Угол: {int(angle_deg)}°")
+
+    if not robot_found:
+        cv2.putText(frame, "Robot ID 0 NOT FOUND", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    cv2.imshow("Tracking Robot 0", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
